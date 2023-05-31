@@ -85,7 +85,7 @@ def folder(console, folder_status, selectionFolder, k_snapshot):
                             os.rmdir(selectionFolder.get() + '\\' + f)
                         except:
 
-                            for ff in os.listdir(selectionFolder.get() + '/' + f):
+                            for ff in os.listdir(selectionFolder.get() + '\\' + f):
                                 os.remove(selectionFolder.get() + '/' + f + '/' + ff)
                             os.rmdir(selectionFolder.get() + '/' + f)
 
