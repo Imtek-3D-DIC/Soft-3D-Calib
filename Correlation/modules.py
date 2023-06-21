@@ -31,6 +31,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 '''
+import joblib
 
 V = 'v1.04.22' # Version
 
@@ -68,6 +69,8 @@ from scipy.spatial.transform import Rotation
 from shapely.geometry import Point;
 from shapely.geometry.polygon import Polygon;
 
+
+from Triangulate import Triangulate
 matplotlib.use('Agg', force=True)
 
 ########################################################################################################################
@@ -103,6 +106,8 @@ process_u1_mem = None
 process_u1_shape = None
 process_v1_mem = None
 process_v1_shape = None
+
+
 
 ########################################################################################################################
 # Line drawing using mouse event functions
@@ -1365,6 +1370,106 @@ def ReconstructionWCS(xL, yL, xR, yR, calib):
     WCS = np.matmul(MLPII,b.transpose());
     Xw = WCS[0]; Yw = WCS[1]; Zw = WCS[2];
 
+    return Xw, Yw, Zw
+
+
+
+########################################################################################################################
+# 3D reconstruction function
+########################################################################################################################
+def ReconstructionWCS_underwater(xL, yL, xR, yR, calib):
+    # 1) Check whether necessary files exists
+
+    camlref = 'cam1_references.json'
+    camrref = 'cam2_references.json'
+    caml = 'cam1.pkl'
+    camr = 'cam2.pkl'
+    if (not os.path.isfile(caml)):
+        print("Error finding camera calibration file: \n {0}".format(cam1))
+
+    if (not os.path.isfile(camr)):
+        print("Error finding camera calibration file: \n {0}".format(cam2))
+
+    tr = Triangulate()
+    # Prepare cameras
+    caml = joblib.load(caml)
+    caml.calcExtrinsicFromJson(camlref)
+    caml.dist = calib[2]
+    caml.K = calib[1]
+    caml.ROT = calib[5]
+    caml.TRANS = calib[6]
+
+    camr = joblib.load(camr)
+    camr.calcExtrinsicFromJson(camrref)
+    camr.dist = calib[4]
+    camr.K = calib[3]
+    camr.ROT = np.linalg.inv(calib[5])
+    camr.TRANS = -(calib[6])
+    # Left camera parameters (master):
+    IntrinsicL = calib[1]
+
+    fLx = IntrinsicL[0,0]
+    fLy = IntrinsicL[1,1]
+    skL = IntrinsicL[0,1]
+    cLx = IntrinsicL[0,2]
+    cLy = IntrinsicL[1,2]
+
+    # Right camera parameters (slave):
+    IntrinsicR = calib[3]
+
+    fRx = IntrinsicR[0,0]
+    fRy = IntrinsicR[1,1]
+    skR = IntrinsicR[0,1]
+    cRx = IntrinsicR[0,2]
+    cRy = IntrinsicR[1,2]
+
+    # Relation between L and R cameras:
+    Rc = calib[5];
+    tc = calib[6];
+
+    # M matrix:
+    M = np.zeros((4,3))
+    M[0,0] = fLx;
+    M[0,1] = skL;
+    M[0,2] = cLx - xL;
+    M[1,0] = 0.0;
+    M[1,1] = fLy;
+    M[1,2] = cLy - yL;
+    M[2,0] = Rc[0,0]*fRx + Rc[1,0]*skR + Rc[2,0]*(cRx - xR);
+    M[2,1] = Rc[0,1]*fRx + Rc[1,1]*skR + Rc[2,1]*(cRx - xR);
+    M[2,2] = Rc[0,2]*fRx + Rc[1,2]*skR + Rc[2,2]*(cRx - xR);
+    M[3,0] = Rc[1,0]*fRy + Rc[2,0]*(cRy - yR);
+    M[3,1] = Rc[1,1]*fRy + Rc[2,1]*(cRy - yR);
+    M[3,2] = Rc[1,2]*fRy + Rc[2,2]*(cRy - yR);
+
+    # MLPI matrix:
+    MLPI = np.matmul(M.transpose(),M);
+    MLPII = np.matmul(np.linalg.inv(MLPI),M.transpose());
+
+    # b vector:
+    b = np.zeros((4))
+    b[0] = 0;
+    b[1] = 0;
+    b[2] = -(tc[0,0]*fRx + tc[0,1]*skR + tc[0,2]*(cRx - xR));
+    b[3] = -(tc[0,1]*fRy + tc[0,2]*(cRy - yR));
+
+    # 3D reconstruction - WORLD COORDINATE SYSTEM (WCS):
+    pos1 = (xL, yL)
+    pos2 = (xR, yR)
+    WCS = np.matmul(MLPII,b.transpose());
+    Xw = WCS[0]; Yw = WCS[1]; Zw = WCS[2];
+    p, d = tr.triangulatePoint(pos1,
+                               pos2,
+                               caml,
+                               camr,
+                               correctRefraction=True)
+
+    p1 = caml.forwardprojectPoint(*p, correctRefraction=True)
+    p2 = camr.forwardprojectPoint(*p, correctRefraction=True)
+
+    err1 = np.linalg.norm(p1 - pos1)
+    err2 = np.linalg.norm(p2 - pos2)
+    err = err1 + err2
     return Xw, Yw, Zw
 
 ########################################################################################################################
